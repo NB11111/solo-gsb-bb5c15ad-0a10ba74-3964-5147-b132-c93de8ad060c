@@ -151,6 +151,34 @@ textarea { resize: vertical; }
 }
 
 /* 质检模式 */
+.baseline-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.baseline-btn {
+  flex: 1;
+  padding: 7px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.baseline-btn:hover:not(:disabled) { background: #e8eef5; }
+.baseline-btn.active {
+  border-color: var(--accent);
+  background: #eff6ff;
+  color: var(--accent);
+  font-weight: 600;
+}
+.baseline-btn:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
 .baseline {
   border-radius: 8px;
   padding: 9px 12px;
@@ -169,6 +197,32 @@ textarea { resize: vertical; }
   color: #92400e;
 }
 .baseline .muted { color: var(--muted); }
+
+/* 拼版基准的标签索引/旋转角小标 */
+.label-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.label-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.6;
+  border: 1px solid transparent;
+}
+.label-chip.rot0 {
+  color: #1d4ed8;
+  border-color: #93c5fd;
+  background: rgba(37, 99, 235, 0.08);
+}
+.label-chip.rot90 {
+  color: #b45309;
+  border-color: #fcd34d;
+  background: rgba(217, 119, 6, 0.08);
+}
 
 .qc-stats .rate { color: #15803d; font-size: 15px; }
 .qc-stats b { font-weight: 700; }

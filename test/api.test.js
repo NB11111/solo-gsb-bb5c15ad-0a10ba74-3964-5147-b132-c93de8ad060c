@@ -90,6 +90,33 @@ test('POST /api/qc 质检接口可直接消费拼版结果的顶层 dots（接�
   assert.equal(qc.json.stats.passCount, panel.json.dots.length);
 });
 
+test('POST /api/qc 消费拼版 dots 时保留 label/rotation：baseline、pairs、SVG、CSV 均标注标签', async () => {
+  const panel = await postJson('/api/panel', { labels: 'EXIT\nWOMEN', plateWidth: 120, plateHeight: 80 });
+  assert.equal(panel.json.ok, true);
+  const qc = await postJson('/api/qc', {
+    design: panel.json.dots,
+    csv: panel.json.dots.map(d => d.x + ',' + d.y).join('\n'),
+    tolerance: 0.5,
+    maxRadius: 2,
+    plateWidth: 120,
+    plateHeight: 80
+  });
+  assert.equal(qc.json.ok, true);
+  // baseline 含标签数量及各标签索引/旋转角
+  assert.equal(qc.json.baseline.labelCount, 2);
+  assert.deepEqual(qc.json.baseline.labels.map(l => [l.index, l.rotation]),
+    panel.json.labels.map(l => [l.index, l.rotation]));
+  // pairs 带标签归属
+  const src = panel.json.dots[0];
+  assert.equal(qc.json.pairs[0].label, src.label);
+  assert.equal(qc.json.pairs[0].labelRotation, src.rotation);
+  // 叠加图与 CSV 标注对应标签
+  assert.match(qc.json.svg, /data-label-count="2"/);
+  assert.match(qc.json.svg, new RegExp('data-label="' + src.label + '"'));
+  assert.match(qc.json.csv, /label_index,label_rotation_deg/);
+  assert.match(qc.json.csv, /# summary,label_count,design_count/);
+});
+
 test('GET /api/health 健康检查正常', async () => {
   const r = await new Promise((resolve, reject) => {
     http.get(baseUrl + '/api/health', res => {

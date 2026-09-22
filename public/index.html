@@ -173,6 +173,10 @@ PUSH</textarea>
     <section id="viewQc" class="mode-view" hidden>
       <!-- 左侧：质检参数 -->
       <section class="panel form-panel" aria-label="压印质检参数">
+        <div class="baseline-switch" role="group" aria-label="质检基准来源">
+          <button id="qcUseLayout" type="button" class="baseline-btn active" aria-pressed="true">单标签排版基准</button>
+          <button id="qcUsePanel" type="button" class="baseline-btn" aria-pressed="false">最近拼版基准</button>
+        </div>
         <div id="qcBaseline" class="baseline"></div>
 
         <label class="field">
@@ -250,7 +254,7 @@ PUSH</textarea>
           <span class="braille-line" title="图例">○ 设计点　◆ 刚体校准（旋转+平移）后实测点</span>
         </div>
         <div id="qcPreview" class="preview">
-          <p class="placeholder">先在「排版」模式完成一次成功排版，再粘贴实测 CSV 后点击「开始质检」</p>
+          <p class="placeholder">先在「排版模式」或「多标签拼版」完成一次成功结果并选为基准，再粘贴实测 CSV 后点击「开始质检」</p>
         </div>
       </section>
     </section>

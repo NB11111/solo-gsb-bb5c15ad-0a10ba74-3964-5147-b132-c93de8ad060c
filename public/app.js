@@ -116,6 +116,7 @@
           renderStats(r);
           btnSvg.disabled = false;
           btnJson.disabled = false;
+          if (!viewQc.hidden) refreshBaselineBox();
         } else {
           lastResult = null;
           statsBox.hidden = true;
@@ -183,6 +184,7 @@
   var btnPanelSvg = document.getElementById('panelDownloadSvg');
   var btnPanelJson = document.getElementById('panelDownloadJson');
   var lastPanel = null;
+  var lastPanelBaseline = null; // 最近一次成功拼版（质检基准用，失败时不被清空）
   var panelTimer = null;
 
   function collectPanelParams() {
@@ -255,17 +257,31 @@
   function handlePanelResult(r) {
     if (r.ok) {
       lastPanel = r;
+      // 质检拼版基准：记录最近一次成功拼版（含时间戳、标签索引/旋转角与带元数据的全局 dots）
+      lastPanelBaseline = {
+        time: fmtTime(new Date()),
+        params: r.params,
+        labels: r.labels.map(function (l) {
+          return { index: l.index, text: l.text, rotation: l.rotation };
+        }),
+        labelCount: r.labelCount,
+        rotatedCount: r.stats ? r.stats.rotatedCount : 0,
+        dots: r.dots
+      };
       panelErrorsBox.hidden = true;
       panelPreview.innerHTML = r.svg.replace(/^<\?xml[^?]*\?>\s*/, '');
       renderPanelStats(r);
       btnPanelSvg.disabled = false;
       btnPanelJson.disabled = false;
+      // 若用户停留在质检页，立即刷新基准区（按钮可用性/标签摘要随最新拼版更新）
+      if (!viewQc.hidden) refreshBaselineBox();
     } else {
       lastPanel = null;
       panelStatsBox.hidden = true;
       renderPanelErrors(r.errors || [{ message: '未知错误' }]);
       btnPanelSvg.disabled = true;
       btnPanelJson.disabled = true;
+      if (!viewQc.hidden) refreshBaselineBox();
     }
   }
 
@@ -319,25 +335,98 @@
   var qcCalibMsg = document.getElementById('qcCalibMsg');
   var btnQcCsv = document.getElementById('qcDownloadCsv');
   var btnQcSvg = document.getElementById('qcDownloadSvg');
+  var qcUseLayout = document.getElementById('qcUseLayout');
+  var qcUsePanel = document.getElementById('qcUsePanel');
 
   var lastQc = null;
   var qcTimer = null;
+  // 当前质检基准来源：'layout'=最近单标签排版；'panel'=最近多标签拼版
+  var baselineSource = 'layout';
+
+  function escapeHtml(s) {
+    return String(s).replace(/[<>&]/g, function (c) {
+      return c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&amp;';
+    });
+  }
+
+  function activeBaseline() {
+    return baselineSource === 'panel' ? lastPanelBaseline : lastBaseline;
+  }
+
+  // 切换基准来源：刷新按钮/基准条并清掉上一次质检结果，避免叠加图与 CSV 与新基准错配；
+  // 已粘贴实测 CSV 时直接按新基准重跑
+  function selectBaselineSource(source) {
+    baselineSource = source;
+    qcUseLayout.classList.toggle('active', source === 'layout');
+    qcUsePanel.classList.toggle('active', source === 'panel');
+    qcUseLayout.setAttribute('aria-pressed', String(source === 'layout'));
+    qcUsePanel.setAttribute('aria-pressed', String(source === 'panel'));
+    lastQc = null;
+    qcStats.hidden = true;
+    qcLegend.hidden = true;
+    qcErrors.hidden = true;
+    if (!qcCalibMsg.hidden) qcCalibMsg.hidden = true;
+    btnQcCsv.disabled = true;
+    btnQcSvg.disabled = true;
+    qcPreview.innerHTML = '<p class="placeholder">已切换基准，点击「开始质检」查看叠加结果</p>';
+    refreshBaselineBox();
+    if (activeBaseline() && qcCsv.value.trim() !== '') runQc();
+  }
+
+  qcUseLayout.addEventListener('click', function () { selectBaselineSource('layout'); });
+  qcUsePanel.addEventListener('click', function () { selectBaselineSource('panel'); });
 
   function refreshBaselineBox() {
+    // 按钮可用性：单标签排版在首屏即会自动成功；拼版按钮在尚无成功拼版时禁用并提示先完成拼版
+    qcUseLayout.disabled = !lastBaseline;
+    qcUsePanel.disabled = !lastPanelBaseline;
+    qcUseLayout.title = lastBaseline ? '以最近一次成功的单标签排版设计点为基准' : '请先在「排版模式」完成一次成功排版';
+    qcUsePanel.title = lastPanelBaseline ? '以最近一次成功拼版的全局 dots 为基准' : '尚无成功拼版，请先在「多标签拼版」完成一次成功拼版';
+    qcUseLayout.classList.toggle('active', baselineSource === 'layout');
+    qcUsePanel.classList.toggle('active', baselineSource === 'panel');
+
+    if (baselineSource === 'panel') {
+      if (lastPanelBaseline) {
+        renderPanelBaseline(lastPanelBaseline);
+      } else {
+        qcBaseline.className = 'baseline warn';
+        qcBaseline.innerHTML = '尚无成功拼版基准：请先切换到「多标签拼版」完成一次成功拼版（拼版失败不会生成基准）。';
+      }
+      return;
+    }
     if (lastBaseline) {
-      var safeText = String(lastBaseline.text).replace(/[<>&]/g, function (c) {
-        return c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&amp;';
-      });
-      qcBaseline.className = 'baseline ok';
-      qcBaseline.innerHTML =
-        '基准：最近一次成功排版「<b>' + (safeText || '（空白标签）') + '</b>」' +
-        '（' + lastBaseline.dots.length + ' 个设计点，板材 ' +
-        lastBaseline.params.plateWidth + ' × ' + lastBaseline.params.plateHeight + ' mm）<br>' +
-        '<span class="muted">排版时间 ' + lastBaseline.time + '</span>';
+      renderLayoutBaseline(lastBaseline);
     } else {
       qcBaseline.className = 'baseline warn';
       qcBaseline.innerHTML = '尚无成功排版基准：请先切换到「排版模式」完成一次成功排版。';
     }
+  }
+
+  function renderLayoutBaseline(base) {
+    var safeText = escapeHtml(base.text);
+    qcBaseline.className = 'baseline ok';
+    qcBaseline.innerHTML =
+      '基准（<b>单标签排版</b>）：最近一次成功排版「<b>' + (safeText || '（空白标签）') + '</b>」' +
+      '（' + base.dots.length + ' 个设计点，板材 ' +
+      base.params.plateWidth + ' × ' + base.params.plateHeight + ' mm）<br>' +
+      '<span class="muted">排版时间 ' + base.time + '</span>';
+  }
+
+  function renderPanelBaseline(base) {
+    // 各标签的索引/旋转角以小圆标列出（0° 蓝 / 90° 橙），title 悬停显示标签原文
+    var chips = base.labels.map(function (l) {
+      var cls = l.rotation === 90 ? 'rot90' : 'rot0';
+      return '<span class="label-chip ' + cls + '" title="' + escapeHtml(l.text) + '">#' +
+        l.index + (l.rotation === 90 ? ' ⟳90°' : '') + '</span>';
+    }).join(' ');
+    qcBaseline.className = 'baseline ok';
+    qcBaseline.innerHTML =
+      '基准（<b>多标签拼版</b>）：最近一次成功拼版共 <b>' + base.labelCount + '</b> 条标签' +
+      '（<b>' + base.rotatedCount + '</b> 条旋转 90°），展平 <b>' + base.dots.length +
+      '</b> 个设计点（保留 label / rotation 元数据），板材 ' +
+      base.params.plateWidth + ' × ' + base.params.plateHeight + ' mm<br>' +
+      '<span class="muted">拼版时间 ' + base.time + '；各标签索引 / 旋转角：</span>' +
+      '<span class="label-chips">' + chips + '</span>';
   }
 
   function numVal(input) {
@@ -360,9 +449,14 @@
 
   function renderQcStats(r) {
     var s = r.stats;
+    var bl = r.baseline || {};
+    var labelInfo = bl.labelCount
+      ? '标签 <b>' + bl.labelCount + '</b> 条，'
+      : '';
     qcStats.innerHTML =
       '通过率 <b class="rate">' + s.passRatePercent + '%</b>' +
       '（合格 <b>' + s.passCount + '</b> / 设计点 ' + s.designCount + '）　' +
+      labelInfo +
       '配对 <b>' + s.matchedCount + '</b>，其中偏移超差 <b>' + s.offsetCount + '</b>；' +
       '缺失 <b>' + s.missingCount + '</b>，多余 <b>' + s.extraCount + '</b><br>' +
       '最大偏差 <b>' + (s.maxDeviation == null ? '—' : s.maxDeviation) + '</b> mm；' +
@@ -393,15 +487,19 @@
   }
 
   function runQc() {
-    if (!lastBaseline) {
+    var base = activeBaseline();
+    if (!base) {
       refreshBaselineBox();
-      renderQcErrors([{ message: '没有成功排版的设计点基准，请先在「排版模式」完成排版。' }]);
+      var tip = baselineSource === 'panel'
+        ? '没有成功拼版的设计点基准，请先在「多标签拼版」完成一次成功拼版。'
+        : '没有成功排版的设计点基准，请先在「排版模式」完成排版。';
+      renderQcErrors([{ message: tip }]);
       return;
     }
     var payload = {
-      design: lastBaseline.dots,
-      plateWidth: lastBaseline.params.plateWidth,
-      plateHeight: lastBaseline.params.plateHeight,
+      design: base.dots,
+      plateWidth: base.params.plateWidth,
+      plateHeight: base.params.plateHeight,
       csv: qcCsv.value,
       offsetX: numVal(qcOffsetX),
       offsetY: numVal(qcOffsetY),
@@ -465,15 +563,19 @@
   }
 
   function runAutoCalibrate() {
-    if (!lastBaseline) {
+    var base = activeBaseline();
+    if (!base) {
       refreshBaselineBox();
-      renderQcErrors([{ message: '没有成功排版的设计点基准，请先在「排版模式」完成排版。' }]);
+      var tip = baselineSource === 'panel'
+        ? '没有成功拼版的设计点基准，请先在「多标签拼版」完成一次成功拼版。'
+        : '没有成功排版的设计点基准，请先在「排版模式」完成排版。';
+      renderQcErrors([{ message: tip }]);
       return;
     }
     var payload = {
-      design: lastBaseline.dots,
-      plateWidth: lastBaseline.params.plateWidth,
-      plateHeight: lastBaseline.params.plateHeight,
+      design: base.dots,
+      plateWidth: base.params.plateWidth,
+      plateHeight: base.params.plateHeight,
       csv: qcCsv.value,
       maxOffsetX: numVal(qcMaxOffsetX),
       maxOffsetY: numVal(qcMaxOffsetY),

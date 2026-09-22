@@ -106,8 +106,9 @@ test('偏移先应用再比较；合格/超差/缺失/多余四类齐全', () =>
 test('报告 CSV 含双方坐标、距离、角度与中文结论', () => {
   const design = [{ x: 5, y: 5, r: 0.75 }];
   const r = QC.inspect({ design, csv: '5.2,4.9', tolerance: 0.5, maxRadius: 2 });
-  assert.match(r.csv, /design_index,design_x_mm,design_y_mm,csv_row,measured_x_mm,measured_y_mm,corrected_x_mm,corrected_y_mm,distance_mm,conclusion,rotation_deg/);
-  assert.match(r.csv, /1,5,5,1,5\.2,4\.9,5\.2,4\.9,0\.2236,合格,0/);
+  assert.match(r.csv, /design_index,label_index,label_rotation_deg,design_x_mm,design_y_mm,csv_row,measured_x_mm,measured_y_mm,corrected_x_mm,corrected_y_mm,distance_mm,conclusion,rotation_deg/);
+  // 单标签基准：label_index / label_rotation_deg 两列留空
+  assert.match(r.csv, /1,,,5,5,1,5\.2,4\.9,5\.2,4\.9,0\.2236,合格,0/);
   assert.match(r.csv, /pass_rate_percent/);
 });
 
@@ -521,4 +522,89 @@ test('inspect 不传 rotation 时行为与旧版一致（旋转 0）', () => {
   const r = QC.inspect({ design, csv: '5.2,4.9', tolerance: 0.5, maxRadius: 2 });
   assert.equal(r.params.rotation, 0);
   assert.ok(Math.abs(r.pairs[0].distance - 0.2236) < 1e-3);
+});
+
+/* ---------- 多标签拼版基准：保留 label / rotation 元数据 ---------- */
+
+const Panel = require('../lib/panel');
+
+test('拼版 dots 作为质检基准：baseline 给出标签数与各标签索引/旋转角', () => {
+  const panel = Panel.packLabels({ labels: 'EXIT\nWOMEN\nMEN', plateWidth: 120, plateHeight: 80 });
+  assert.equal(panel.ok, true);
+  const q = QC.inspect({
+    design: panel.dots,
+    csv: panel.dots.map(d => d.x + ',' + d.y).join('\n'),
+    tolerance: 0.5, maxRadius: 2,
+    plateWidth: 120, plateHeight: 80
+  });
+  assert.equal(q.ok, true);
+  assert.equal(q.baseline.labelCount, panel.labels.length);
+  assert.deepEqual(q.baseline.labels.map(l => l.index), panel.labels.map(l => l.index));
+  assert.deepEqual(q.baseline.labels.map(l => l.rotation), panel.labels.map(l => l.rotation));
+  assert.ok(q.baseline.labels.every(l => l.dotCount > 0));
+});
+
+test('拼版 dots 作为基准：pairs/missing 带 label 与 labelRotation，全部合格时无缺失/多余', () => {
+  const panel = Panel.packLabels({ labels: 'a\nb', plateWidth: 120, plateHeight: 80 });
+  const q = QC.inspect({
+    design: panel.dots,
+    csv: panel.dots.map(d => d.x + ',' + d.y).join('\n'),
+    tolerance: 0.5, maxRadius: 2,
+    plateWidth: 120, plateHeight: 80
+  });
+  assert.equal(q.stats.passCount, panel.dots.length);
+  assert.equal(q.stats.missingCount, 0);
+  assert.equal(q.stats.extraCount, 0);
+  q.pairs.forEach(p => {
+    const src = panel.dots[p.designIndex - 1];
+    assert.equal(p.label, src.label);
+    assert.equal(p.labelRotation, src.rotation);
+  });
+});
+
+test('拼版基准下缺失点标注所属标签；叠加 SVG 画标签边界并带 data-label', () => {
+  const panel = Panel.packLabels({ labels: 'a\nb', plateWidth: 120, plateHeight: 80 });
+  // 只实测最后一个设计点：其余全部缺失，缺失项应带各自 label
+  const last = panel.dots[panel.dots.length - 1];
+  const q = QC.inspect({
+    design: panel.dots,
+    csv: last.x + ',' + last.y,
+    tolerance: 0.5, maxRadius: 2,
+    plateWidth: 120, plateHeight: 80
+  });
+  assert.equal(q.ok, true);
+  assert.equal(q.missing.length, panel.dots.length - 1);
+  q.missing.forEach(m => {
+    assert.equal(m.label, panel.dots[m.designIndex - 1].label);
+    assert.equal(m.labelRotation, panel.dots[m.designIndex - 1].rotation);
+  });
+  assert.match(q.svg, /data-label-count="2"/);
+  assert.match(q.svg, /class="qc-label" data-label-index="1"/);
+  assert.match(q.svg, /data-label="/);
+  assert.match(q.svg, /data-label-rotation="/);
+});
+
+test('拼版基准 CSV 报告：明细含 label_index/label_rotation_deg，汇总行含 label_count', () => {
+  const panel = Panel.packLabels({ labels: 'a\nb', plateWidth: 120, plateHeight: 80 });
+  const q = QC.inspect({
+    design: panel.dots,
+    csv: panel.dots.map(d => d.x + ',' + d.y).join('\n'),
+    tolerance: 0.5, maxRadius: 2,
+    plateWidth: 120, plateHeight: 80
+  });
+  const first = panel.dots[0];
+  assert.match(q.csv, new RegExp('1,' + first.label + ',' + first.rotation + ','));
+  assert.match(q.csv, /# summary,label_count,design_count/);
+  assert.match(q.csv, /,2,\d+,/); // label_count=2
+});
+
+test('单标签基准保持兼容：baseline.labelCount=0，点与 SVG 不带标签标注', () => {
+  const design = [{ x: 5, y: 5, r: 0.75 }];
+  const q = QC.inspect({ design, csv: '5.2,4.9', tolerance: 0.5, maxRadius: 2 });
+  assert.equal(q.baseline.labelCount, 0);
+  assert.deepEqual(q.baseline.labels, []);
+  assert.equal(q.pairs[0].label, null);
+  assert.equal(q.pairs[0].labelRotation, null);
+  assert.doesNotMatch(q.svg, /data-label=/);
+  assert.doesNotMatch(q.svg, /qc-label/);
 });
