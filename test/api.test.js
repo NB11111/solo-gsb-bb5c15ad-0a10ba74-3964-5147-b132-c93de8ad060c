@@ -90,6 +90,41 @@ test('POST /api/qc 质检接口可直接消费拼版结果的顶层 dots（接�
   assert.equal(qc.json.stats.passCount, panel.json.dots.length);
 });
 
+test('POST /api/qc 以拼版为基准：配对/报告/叠加图标注标签索引与旋转角', async () => {
+  // 短标签 0° + 长标签只能 90°：一次拼版同时覆盖两种旋转角
+  const panel = await postJson('/api/panel', {
+    labels: 'EXIT\nbbcdefghijklmno', plateWidth: 95, plateHeight: 100
+  });
+  assert.equal(panel.json.ok, true);
+  assert.deepEqual(panel.json.labels.map(l => l.rotation), [0, 90]);
+  const dots = panel.json.dots;
+  assert.ok(dots.every(d => Number.isInteger(d.label) && (d.rotation === 0 || d.rotation === 90)));
+
+  const qc = await postJson('/api/qc', {
+    design: dots,
+    csv: dots.map(d => d.x + ',' + d.y).join('\n'),
+    tolerance: 0.2,
+    maxRadius: 1,
+    plateWidth: 95,
+    plateHeight: 100
+  });
+  assert.equal(qc.json.ok, true);
+  assert.equal(qc.json.stats.passCount, dots.length);
+  // 配对结果保留标签元数据
+  assert.ok(qc.json.pairs.every(p => p.label === 1 || p.label === 2));
+  assert.ok(qc.json.pairs.some(p => p.labelRotation === 90));
+  // CSV 报告：标签列 + 标签清单（含 0° 与 90° 两条）
+  assert.match(qc.json.csv, /design_index,label_index,label_rotation_deg,design_x_mm/);
+  assert.match(qc.json.csv, /# labels,label_index,label_rotation_deg,design_dots/);
+  assert.match(qc.json.csv, /^,1,0,\d+$/m);
+  assert.match(qc.json.csv, /^,2,90,\d+$/m);
+  // 叠加 SVG：标签锚点与 data-label 属性
+  assert.match(qc.json.svg, /data-label="1"/);
+  assert.match(qc.json.svg, /data-label-rotation="90"/);
+  assert.match(qc.json.svg, />#1</);
+  assert.match(qc.json.svg, />#2 ⟳90°</);
+});
+
 test('GET /api/health 健康检查正常', async () => {
   const r = await new Promise((resolve, reject) => {
     http.get(baseUrl + '/api/health', res => {

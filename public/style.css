@@ -151,6 +151,40 @@ textarea { resize: vertical; }
 }
 
 /* 质检模式 */
+.qc-source {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.qc-source-btn {
+  flex: 1;
+  padding: 7px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.qc-source-btn.active {
+  border-color: var(--accent);
+  background: #eff6ff;
+  color: var(--accent);
+  font-weight: 600;
+}
+.qc-source-btn:disabled {
+  background: #e2e8f0;
+  color: #94a3b8;
+  cursor: not-allowed;
+  border-color: var(--border);
+}
+.qc-source-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #92400e;
+  line-height: 1.5;
+}
+
 .baseline {
   border-radius: 8px;
   padding: 9px 12px;

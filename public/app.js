@@ -183,6 +183,7 @@
   var btnPanelSvg = document.getElementById('panelDownloadSvg');
   var btnPanelJson = document.getElementById('panelDownloadJson');
   var lastPanel = null;
+  var lastPanelBaseline = null; // 最近一次成功拼版（质检可选基准，失败时不被清空）
   var panelTimer = null;
 
   function collectPanelParams() {
@@ -255,6 +256,16 @@
   function handlePanelResult(r) {
     if (r.ok) {
       lastPanel = r;
+      // 质检基准：记录最近一次成功拼版（全局 dots 含 label/rotation 元数据）
+      lastPanelBaseline = {
+        time: fmtTime(new Date()),
+        labels: r.labels.map(function (l) {
+          return { index: l.index, rotation: l.rotation, text: l.text, dotCount: l.dots.length };
+        }),
+        dots: r.dots,
+        params: r.params,
+        stats: r.stats
+      };
       panelErrorsBox.hidden = true;
       panelPreview.innerHTML = r.svg.replace(/^<\?xml[^?]*\?>\s*/, '');
       renderPanelStats(r);
@@ -311,6 +322,9 @@
   var qcPreview = document.getElementById('qcPreview');
   var qcLegend = document.getElementById('qcLegend');
   var qcBaseline = document.getElementById('qcBaseline');
+  var qcSrcLayout = document.getElementById('qcSrcLayout');
+  var qcSrcPanel = document.getElementById('qcSrcPanel');
+  var qcSrcHint = document.getElementById('qcSrcHint');
   var qcMaxOffsetX = document.getElementById('qcMaxOffsetX');
   var qcMaxOffsetY = document.getElementById('qcMaxOffsetY');
   var qcMaxAngle = document.getElementById('qcMaxAngle');
@@ -322,12 +336,48 @@
 
   var lastQc = null;
   var qcTimer = null;
+  var qcBaselineSource = 'layout'; // 质检基准来源：layout=单标签排版 / panel=最近拼版
+
+  function escHtml(s) {
+    return String(s).replace(/[<>&]/g, function (c) {
+      return c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&amp;';
+    });
+  }
+
+  // 当前选中的质检基准（单标签排版或最近拼版；均无则 null）
+  function activeQcBaseline() {
+    return qcBaselineSource === 'panel' ? lastPanelBaseline : lastBaseline;
+  }
 
   function refreshBaselineBox() {
+    // 基准来源切换按钮：无成功拼版时禁用拼版按钮并提示先完成拼版
+    qcSrcLayout.classList.toggle('active', qcBaselineSource === 'layout');
+    qcSrcPanel.classList.toggle('active', qcBaselineSource === 'panel');
+    qcSrcPanel.disabled = !lastPanelBaseline;
+    qcSrcHint.hidden = !!lastPanelBaseline;
+
+    if (qcBaselineSource === 'panel') {
+      if (lastPanelBaseline) {
+        var bp = lastPanelBaseline;
+        var rotated = bp.labels.filter(function (l) { return l.rotation === 90; }).length;
+        var labelList = bp.labels.map(function (l) {
+          return '#' + l.index + '「' + escHtml(l.text) + '」' + (l.rotation === 90 ? '⟳90°' : '0°');
+        }).join('、');
+        qcBaseline.className = 'baseline ok';
+        qcBaseline.innerHTML =
+          '基准：最近一次成功拼版，共 <b>' + bp.labels.length + '</b> 条标签' +
+          '（' + rotated + ' 条旋转 90°），' + bp.dots.length + ' 个设计点，板材 ' +
+          bp.params.plateWidth + ' × ' + bp.params.plateHeight + ' mm<br>' +
+          '<span class="muted">' + labelList + '</span><br>' +
+          '<span class="muted">拼版时间 ' + bp.time + '</span>';
+      } else {
+        qcBaseline.className = 'baseline warn';
+        qcBaseline.innerHTML = '尚无成功拼版基准：请先切换到「多标签拼版」完成一次成功拼版。';
+      }
+      return;
+    }
     if (lastBaseline) {
-      var safeText = String(lastBaseline.text).replace(/[<>&]/g, function (c) {
-        return c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&amp;';
-      });
+      var safeText = escHtml(lastBaseline.text);
       qcBaseline.className = 'baseline ok';
       qcBaseline.innerHTML =
         '基准：最近一次成功排版「<b>' + (safeText || '（空白标签）') + '</b>」' +
@@ -336,9 +386,20 @@
         '<span class="muted">排版时间 ' + lastBaseline.time + '</span>';
     } else {
       qcBaseline.className = 'baseline warn';
-      qcBaseline.innerHTML = '尚无成功排版基准：请先切换到「排版模式」完成一次成功排版。';
+      qcBaseline.innerHTML = '尚无成功排版基准：请先切换到「排版模式」完成一次成功排版' +
+        (lastPanelBaseline ? '，或点击上方「使用最近拼版作为基准」。' : '。');
     }
   }
+
+  qcSrcLayout.addEventListener('click', function () {
+    qcBaselineSource = 'layout';
+    refreshBaselineBox();
+  });
+  qcSrcPanel.addEventListener('click', function () {
+    if (!lastPanelBaseline) return; // 按钮禁用时的兜底
+    qcBaselineSource = 'panel';
+    refreshBaselineBox();
+  });
 
   function numVal(input) {
     var v = input.value.trim();
@@ -392,16 +453,23 @@
     }
   }
 
+  function noBaselineMessage() {
+    return qcBaselineSource === 'panel'
+      ? '没有成功拼版的设计点基准，请先在「多标签拼版」完成一次成功拼版。'
+      : '没有成功排版的设计点基准，请先在「排版模式」完成排版。';
+  }
+
   function runQc() {
-    if (!lastBaseline) {
+    var baseline = activeQcBaseline();
+    if (!baseline) {
       refreshBaselineBox();
-      renderQcErrors([{ message: '没有成功排版的设计点基准，请先在「排版模式」完成排版。' }]);
+      renderQcErrors([{ message: noBaselineMessage() }]);
       return;
     }
     var payload = {
-      design: lastBaseline.dots,
-      plateWidth: lastBaseline.params.plateWidth,
-      plateHeight: lastBaseline.params.plateHeight,
+      design: baseline.dots,
+      plateWidth: baseline.params.plateWidth,
+      plateHeight: baseline.params.plateHeight,
       csv: qcCsv.value,
       offsetX: numVal(qcOffsetX),
       offsetY: numVal(qcOffsetY),
@@ -465,15 +533,16 @@
   }
 
   function runAutoCalibrate() {
-    if (!lastBaseline) {
+    var baseline = activeQcBaseline();
+    if (!baseline) {
       refreshBaselineBox();
-      renderQcErrors([{ message: '没有成功排版的设计点基准，请先在「排版模式」完成排版。' }]);
+      renderQcErrors([{ message: noBaselineMessage() }]);
       return;
     }
     var payload = {
-      design: lastBaseline.dots,
-      plateWidth: lastBaseline.params.plateWidth,
-      plateHeight: lastBaseline.params.plateHeight,
+      design: baseline.dots,
+      plateWidth: baseline.params.plateWidth,
+      plateHeight: baseline.params.plateHeight,
       csv: qcCsv.value,
       maxOffsetX: numVal(qcMaxOffsetX),
       maxOffsetY: numVal(qcMaxOffsetY),

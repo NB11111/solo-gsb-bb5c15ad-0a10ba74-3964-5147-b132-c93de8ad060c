@@ -522,3 +522,91 @@ test('inspect 不传 rotation 时行为与旧版一致（旋转 0）', () => {
   assert.equal(r.params.rotation, 0);
   assert.ok(Math.abs(r.pairs[0].distance - 0.2236) < 1e-3);
 });
+
+/* ---------- 拼版基准：label / rotation 元数据标注 ---------- */
+
+// 模拟拼版返回的全局 dots（含 label / rotation 元数据）
+const PANEL_DESIGN = [
+  { x: 10, y: 10, r: 0.75, label: 1, rotation: 0 },
+  { x: 12.5, y: 10, r: 0.75, label: 1, rotation: 0 },
+  { x: 40, y: 20, r: 0.75, label: 2, rotation: 90 },
+  { x: 40, y: 22.5, r: 0.75, label: 2, rotation: 90 }
+];
+const PANEL_PLATE = { plateWidth: 120, plateHeight: 80 };
+
+test('拼版基准：配对与缺失结果保留标签索引与旋转角', () => {
+  const r = QC.inspect({
+    design: PANEL_DESIGN,
+    csv: '10.1,10\n12.4,10.1\n40.1,20.1', // 第 4 个设计点缺失
+    tolerance: 0.5, maxRadius: 1, ...PANEL_PLATE
+  });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.pairs.map(p => [p.designIndex, p.label, p.labelRotation]),
+    [[1, 1, 0], [2, 1, 0], [3, 2, 90]]);
+  assert.equal(r.missing.length, 1);
+  assert.equal(r.missing[0].designIndex, 4);
+  assert.equal(r.missing[0].label, 2);
+  assert.equal(r.missing[0].labelRotation, 90);
+});
+
+test('拼版基准：CSV 报告标注标签索引/旋转角并附标签清单', () => {
+  const r = QC.inspect({
+    design: PANEL_DESIGN,
+    csv: '10.1,10\n12.4,10.1\n40.1,20.1\n99,99', // 缺失 1 点 + 多余 1 点
+    tolerance: 0.5, maxRadius: 1, ...PANEL_PLATE
+  });
+  assert.equal(r.ok, true);
+  // 表头在 design_index 后插入标签两列
+  assert.match(r.csv, /design_index,label_index,label_rotation_deg,design_x_mm,design_y_mm,csv_row/);
+  // 配对行带标签索引与旋转角
+  assert.match(r.csv, /^1,1,0,10,10,1,10\.1,10,10\.1,10,0\.1,合格,0$/m);
+  assert.match(r.csv, /^3,2,90,40,20,3,40\.1,20\.1/m);
+  // 缺失行带标签；多余实测点无标签（留空）
+  assert.match(r.csv, /^4,2,90,40,22\.5,,,,,,,缺失,0$/m);
+  assert.match(r.csv, /^,,,,,4,99,99,99,99,,多余,0$/m);
+  // 末尾标签清单：索引 / 旋转角 / 设计点数
+  assert.match(r.csv, /# labels,label_index,label_rotation_deg,design_dots/);
+  assert.match(r.csv, /^,1,0,2$/m);
+  assert.match(r.csv, /^,2,90,2$/m);
+});
+
+test('拼版基准：叠加 SVG 画标签锚点并在元素上带 data-label 属性', () => {
+  const r = QC.inspect({
+    design: PANEL_DESIGN,
+    csv: '10.1,10\n12.4,10.1\n40.1,20.1',
+    tolerance: 0.5, maxRadius: 1, ...PANEL_PLATE
+  });
+  assert.equal(r.ok, true);
+  assert.match(r.svg, /data-label="1"/);
+  assert.match(r.svg, /data-label="2"/);
+  assert.match(r.svg, /data-label-rotation="90"/);
+  // 每个标签一个 #n 锚点文本（90° 标签带 ⟳90°）
+  assert.match(r.svg, />#1</);
+  assert.match(r.svg, />#2 ⟳90°</);
+  assert.match(r.svg, /#n 为设计点所属拼版标签索引/);
+  // 缺失点的设计圆也标注所属标签
+  assert.match(r.svg, /data-verdict="missing" data-rotation="0" data-label="2" data-label-rotation="90"/);
+});
+
+test('无标签元数据时报告与叠加图不含标签标注（向后兼容）', () => {
+  const design = [{ x: 5, y: 5, r: 0.75 }, { x: 11, y: 5, r: 0.75 }];
+  const r = QC.inspect({ design, csv: '5.2,4.9', tolerance: 0.5, maxRadius: 2 });
+  assert.equal(r.ok, true);
+  assert.equal(r.pairs[0].label, undefined);
+  assert.equal(r.missing[0].label, undefined);
+  assert.doesNotMatch(r.csv, /label_index/);
+  assert.doesNotMatch(r.csv, /# labels/);
+  assert.doesNotMatch(r.svg, /data-label/);
+});
+
+test('拼版基准：自动校准可直接使用带标签元数据的设计点', () => {
+  // 实测整体平移 (+0.3, -0.2)，估算值应为 (-0.3, +0.2)
+  const csv = PANEL_DESIGN.map(d => (d.x + 0.3) + ',' + (d.y - 0.2)).join('\n');
+  const r = QC.estimateCalibration({
+    design: PANEL_DESIGN, csv, maxOffsetX: 1, maxOffsetY: 1, maxRadius: 0.3, ...PANEL_PLATE
+  });
+  assert.equal(r.ok, true);
+  assert.ok(Math.abs(r.offsetX - -0.3) < 1e-9, 'dx=' + r.offsetX);
+  assert.ok(Math.abs(r.offsetY - 0.2) < 1e-9, 'dy=' + r.offsetY);
+  assert.equal(r.matchedCount, 4);
+});
